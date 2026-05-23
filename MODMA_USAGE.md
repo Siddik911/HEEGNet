@@ -40,6 +40,22 @@ python modma_train.py \
   --input-align
 ```
 
+
+If you hit OOM/"killed", start with safer memory settings:
+
+```bash
+python modma_train.py \
+  --data-root "/home/hasan/EEG/Dataset/MODMA_128_channel_resting/EEG_128channels_ERP_lanzhou_2015" \
+  --labels-xlsx "/home/hasan/EEG/Dataset/MODMA_128_channel_resting/EEG_128channels_ERP_lanzhou_2015/subjects_information_EEG_128channels_ERP_lanzhou_2015.xlsx" \
+  --epochs 60 \
+  --batch-size 16 \
+  --domains-per-batch 4 \
+  --epoch-seconds 4 \
+  --max-epochs-per-subject 80 \
+  --dtype float32 \
+  --input-align
+```
+
 ## 4) Outputs
 
 - `results/modma_fold_results.csv` (fold/domain metrics)

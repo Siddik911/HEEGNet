@@ -15,7 +15,14 @@ from nets.trainer import Trainer
 from nets.utils.data import DomainDataset, StratifiedDomainDataLoader
 
 
-def build_trials_from_raw(root: Path, labels_xlsx: Path, sfreq=250, tmin=0.0, tmax=1.0):
+def build_trials_from_raw(
+    root: Path,
+    labels_xlsx: Path,
+    sfreq=250,
+    tmin=0.0,
+    tmax=4.0,
+    max_epochs_per_subject=120,
+):
     """Build trial tensors from MODMA .raw files.
 
     This implementation expects MNE to be installed and that each .raw file can be
@@ -117,17 +124,23 @@ def build_trials_from_raw(root: Path, labels_xlsx: Path, sfreq=250, tmin=0.0, tm
 
         raw_path = resolve_raw_path(subject_id_raw, row["filename"] if "filename" in row else None)
 
-        raw = mne.io.read_raw_egi(str(raw_path), preload=True, verbose="ERROR")
+        raw = mne.io.read_raw_egi(str(raw_path), preload=False, verbose="ERROR")
+        raw.pick("eeg")
+        raw.load_data(verbose="ERROR")
         raw.filter(1.0, 45.0, verbose="ERROR")
         raw.notch_filter(50.0, verbose="ERROR")
         raw.resample(sfreq, verbose="ERROR")
 
         duration = tmax - tmin
         events = mne.make_fixed_length_events(raw, id=1, duration=duration)
+        if max_epochs_per_subject is not None:
+            events = events[:max_epochs_per_subject]
         epochs = mne.Epochs(raw, events, event_id={"fixed": 1}, tmin=tmin, tmax=tmax,
                             baseline=(tmin, 0.0) if tmin < 0 else None,
                             preload=True, verbose="ERROR")
-        x = epochs.get_data()  # [n_trials, n_channels, n_times]
+        x = epochs.get_data().astype(np.float32, copy=False)  # [n_trials, n_channels, n_times]
+        del epochs
+        del raw
 
         y = np.full((x.shape[0],), label, dtype=np.int64)
         s = np.full((x.shape[0],), int("".join(ch for ch in subject_id if ch.isdigit()) or 0), dtype=np.int64)
@@ -158,6 +171,10 @@ def main():
     parser.add_argument("--input-align", action="store_true")
     parser.add_argument("--no-domain-adaptation", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--sfreq", type=int, default=250)
+    parser.add_argument("--epoch-seconds", type=float, default=4.0)
+    parser.add_argument("--max-epochs-per-subject", type=int, default=120)
+    parser.add_argument("--dtype", choices=["float32", "float64"], default="float32")
     args = parser.parse_args()
 
     cfg = dict(
@@ -165,7 +182,7 @@ def main():
         batch_size_train=args.batch_size,
         domains_per_batch=args.domains_per_batch,
         validation_size=0.2,
-        dtype=torch.float64,
+        dtype=torch.float32 if args.dtype == "float32" else torch.float64,
         lr=args.lr,
         input_align=args.input_align,
         weight_decay=args.weight_decay,
@@ -179,7 +196,14 @@ def main():
     torch.manual_seed(args.seed)
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
-    X, labels, subjects, sessions = build_trials_from_raw(args.data_root, args.labels_xlsx)
+    X, labels, subjects, sessions = build_trials_from_raw(
+        args.data_root,
+        args.labels_xlsx,
+        sfreq=args.sfreq,
+        tmin=0.0,
+        tmax=args.epoch_seconds,
+        max_epochs_per_subject=args.max_epochs_per_subject,
+    )
 
     domain_labels = [f"{sub}_{sess}" for sub, sess in zip(subjects, sessions)]
     domain = sklearn.preprocessing.LabelEncoder().fit_transform(domain_labels)
