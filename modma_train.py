@@ -57,22 +57,45 @@ def build_trials_from_raw(root: Path, labels_xlsx: Path, sfreq=250, tmin=0.0, tm
     if not raw_files:
         raise FileNotFoundError(f"No .raw files found in {root}")
 
+    def _normalize_subject_key(value):
+        s = ''.join(ch for ch in str(value).strip() if ch.isdigit())
+        return s.lstrip('0') or s
+
+    def _filename_subject_key(path):
+        stem = path.stem
+        prefix = ''
+        for ch in stem:
+            if ch.isdigit():
+                prefix += ch
+            else:
+                break
+        return _normalize_subject_key(prefix)
+
     def resolve_raw_path(subject_id, maybe_filename):
         if isinstance(maybe_filename, str) and maybe_filename.strip():
             p = root / maybe_filename.strip()
             if p.exists():
                 return p
 
-        sid = str(subject_id).strip()
-        candidates = [p for p in raw_files if p.name.startswith(sid)]
-        if len(candidates) == 1:
-            return candidates[0]
-        if len(candidates) > 1:
+        sid = _normalize_subject_key(subject_id)
+        exact = [p for p in raw_files if _filename_subject_key(p) == sid]
+        if len(exact) == 1:
+            return exact[0]
+        if len(exact) > 1:
             raise RuntimeError(
-                f"Multiple raw files match subject_id={sid}: {[c.name for c in candidates]}"
+                f"Multiple raw files match subject_id={subject_id}: {[c.name for c in exact]}"
             )
+
+        fuzzy = [p for p in raw_files if p.name.startswith(str(subject_id).strip())]
+        if len(fuzzy) == 1:
+            return fuzzy[0]
+        if len(fuzzy) > 1:
+            raise RuntimeError(
+                f"Multiple raw files match subject_id={subject_id}: {[c.name for c in fuzzy]}"
+            )
+
         raise FileNotFoundError(
-            f"Could not resolve raw file for subject_id={sid}. "
+            f"Could not resolve raw file for subject_id={subject_id}. "
             "Add a filename column or verify file naming."
         )
 
@@ -80,7 +103,7 @@ def build_trials_from_raw(root: Path, labels_xlsx: Path, sfreq=250, tmin=0.0, tm
 
     for _, row in df.iterrows():
         subject_id_raw = str(row["subject_id"]).strip()
-        subject_id = int(subject_id_raw)
+        subject_id = subject_id_raw
 
         raw_label = row["label"]
         if isinstance(raw_label, str):
@@ -107,7 +130,7 @@ def build_trials_from_raw(root: Path, labels_xlsx: Path, sfreq=250, tmin=0.0, tm
         x = epochs.get_data()  # [n_trials, n_channels, n_times]
 
         y = np.full((x.shape[0],), label, dtype=np.int64)
-        s = np.full((x.shape[0],), subject_id, dtype=np.int64)
+        s = np.full((x.shape[0],), int("".join(ch for ch in subject_id if ch.isdigit()) or 0), dtype=np.int64)
         sess = np.ones((x.shape[0],), dtype=np.int64)
 
         all_x.append(x)
