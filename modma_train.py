@@ -15,6 +15,21 @@ from nets.trainer import Trainer
 from nets.utils.data import DomainDataset, StratifiedDomainDataLoader
 
 
+def safe_euler_align(raw_array: np.ndarray, epsilon: float = 1e-6) -> np.ndarray:
+    """Euler align with diagonal regularization fallback for singular covariance."""
+    cov_matrices = [np.cov(trial, rowvar=True) for trial in raw_array]
+    mean_cov_matrix = np.mean(cov_matrices, axis=0)
+    mean_cov_matrix = mean_cov_matrix + np.eye(mean_cov_matrix.shape[0]) * epsilon
+    try:
+        from scipy.linalg import sqrtm, inv
+        trans_matrix = inv(sqrtm(mean_cov_matrix))
+        trans_matrix = np.real_if_close(trans_matrix)
+        return trans_matrix @ raw_array
+    except Exception:
+        return raw_array
+
+
+
 def build_trials_from_raw(
     root: Path,
     labels_xlsx: Path,
@@ -211,7 +226,7 @@ def main():
 
     if cfg["input_align"]:
         for i in domain.unique():
-            X[domain == i] = fn.euler_align(X[domain == i])
+            X[domain == i] = safe_euler_align(X[domain == i])
 
     X = torch.from_numpy(X)
     y = torch.from_numpy(sklearn.preprocessing.LabelEncoder().fit_transform(labels))
